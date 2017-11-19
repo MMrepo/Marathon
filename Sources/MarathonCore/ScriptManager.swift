@@ -103,17 +103,24 @@ internal final class ScriptManager {
         if let file = try? File(path: path.asScriptPath()) {
             return try script(from: file)
         }
+       
+        let components = path.components(separatedBy: ",")
+        let branch = components.filter({ $0.replacingOccurrences(of: "\\h", with: "", options: .regularExpression).hasPrefix("branch:") }).flatMap({ $0.components(separatedBy: ",").last })
+        
+        guard let gitPath = components.first else {
+            throw Error.scriptNotFound(path)
+        }
 
-        if path.hasPrefix("http") || path.hasPrefix("git@") {
+        if gitPath.hasPrefix("http") || gitPath.hasPrefix("git@") {
             guard allowRemote else {
                 throw Error.remoteScriptNotAllowed
             }
 
-            guard let url = URL(string: path) else {
+            guard let url = URL(string: gitPath) else {
                 throw Error.scriptNotFound(path)
             }
 
-            if path.hasSuffix(".git") {
+            if gitPath.hasSuffix(".git") {
                 return try downloadScriptFromRepository(at: url)
             }
 
@@ -128,11 +135,11 @@ internal final class ScriptManager {
             throw Error.remoteScriptNotAllowed
         }
 
-        guard let gitHubURL = URL(string: "https://github.com/\(path).git") else {
+        guard let gitHubURL = URL(string: "https://github.com/\(gitPath).git") else {
             throw Error.scriptNotFound(path)
         }
 
-        return try downloadScriptFromRepository(at: gitHubURL)
+        return try downloadScriptFromRepository(at: gitHubURL, branch: branch)
     }
 
     func removeDataForScript(at path: String) throws {
@@ -205,14 +212,14 @@ internal final class ScriptManager {
         }
     }
 
-    private func downloadScriptFromRepository(at url: URL) throws -> Script {
+    private func downloadScriptFromRepository(at url: URL, branch: String? = nil) throws -> Script {
         let identifier = scriptIdentifier(from: url.absoluteString)
         let folder = try temporaryFolder.createSubfolderIfNeeded(withName: identifier)
         try folder.empty()
 
         do {
             printer.reportProgress("Cloning \(url)...")
-            let cloneCommand = "git clone \(url.absoluteString) clone -q"
+            let cloneCommand = branch ? "git clone  -b \(branch) \(url.absoluteString) clone -q" : "git clone \(url.absoluteString) clone -q"
             try folder.moveToAndPerform(command: cloneCommand, printer: printer)
         } catch {
             throw Error.failedToDownloadScript(url, error)
